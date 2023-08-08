@@ -1,0 +1,284 @@
+---
+title: "Final Project Graphs"
+subtitle: "Data Visualization"
+author: "Ryan Shanker"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    highlight: "tango"
+---
+
+These graphs were created using the three following datasets:
+
+1. A dataset of RAPTOR statistics for modern NBA players for the 2014-2021 seasons from FiveThirtyEight's Github (https://github.com/fivethirtyeight/data/blob/master/nba-raptor/modern_RAPTOR_by_player.csv)
+
+2. A table of all NBA player salaries from the 2021-22 season to the future 2024-25 season from HoopsHype (https://hoopshype.com/salaries/players/)
+
+3. Datasets of the win-loss records for the teams in each conference for the first 25 games of the 2021-22 season
+from Basketball Reference (https://www.basketball-reference.com/leagues/NBA_2022_standings.html)
+
+## Graph 1
+```{r echo = FALSE, message = FALSE, warning = FALSE}
+library(ggplot2)
+library(tidyverse)
+library(janitor)
+library(dplyr)
+library(stringi)
+
+nbaraptor <- read_csv("modern_RAPTOR_by_player.csv")
+nbasalaries <- read_csv("nbasalaries2021.csv")
+winpct <- read_csv("winpct.csv")
+
+nbasalaries <- nbasalaries %>% 
+  janitor::clean_names()
+
+nbasalaries <- subset (nbasalaries, select = -x1)
+winpct <- subset(winpct, select = -...1)
+
+names(nbaraptor)[1] <- 'player'
+names(nbasalaries)[3] <- 'salary2021_22'
+
+nbasalaries$player <- stri_trans_general(nbasalaries$player, "Latin-ASCII")
+
+nbaraptor2021 <- nbaraptor %>% 
+  filter(season == 2021 & mp >= 500)
+
+nbasalaries$salary2021_22 = as.numeric(gsub("[\\$,]", "", nbasalaries$salary2021_22))
+
+nbaraptordata <- subset(nbaraptor2021, player %in% nbasalaries$player)
+nbasalariesdata <- subset(nbasalaries, player %in% nbaraptordata$player)
+
+fullnbadata <- merge(nbaraptordata, nbasalariesdata, by = 'player')
+```
+
+```{r echo = FALSE, message = FALSE}
+raptorscaler <- function(player2) {
+  
+  filtered <- fullnbadata %>% 
+  filter(player == player2)
+  
+  x = ((filtered$raptor_total - mean(fullnbadata$raptor_total))/(sd(fullnbadata$raptor_total)))
+  
+  return(x)
+}
+
+warscaler <- function(player2) {
+  
+  filtered <- fullnbadata %>% 
+  filter(player == player2)
+  
+  x = ((filtered$war_total - mean(fullnbadata$war_total))/(sd(fullnbadata$war_total)))
+  
+  return(x)
+}
+
+boxscaler <- function(player2) {
+  
+  filtered <- fullnbadata %>% 
+  filter(player == player2)
+  
+  x = ((filtered$raptor_box_total - mean(fullnbadata$raptor_box_total))/(sd(fullnbadata$raptor_box_total)))
+  
+  return(x)
+}
+
+salaryscaler <- function(player2) {
+  
+  filtered <- fullnbadata %>% 
+  filter(player == player2)
+  
+   y = ((filtered$salary2021_22 - mean(fullnbadata$salary2021_22))/(sd(fullnbadata$salary2021_22)))
+  
+  return(y)
+}
+
+```
+
+```{r echo = FALSE, message = FALSE}
+fullnbadata <- fullnbadata %>% 
+  mutate(RAPTOR_scaled = raptorscaler(player))
+
+fullnbadata <- fullnbadata %>% 
+  mutate(WAR_scaled = warscaler(player))
+
+fullnbadata <- fullnbadata %>% 
+  mutate(RAPTOR_box_scaled = boxscaler(player))
+
+fullnbadata <- fullnbadata %>% 
+  mutate(salary_scaled = salaryscaler(player))
+
+fullnbadata <- fullnbadata %>% 
+  mutate(difference = ((RAPTOR_box_scaled + WAR_scaled + RAPTOR_scaled))/3 - salary_scaled)
+
+fullnbadata <- fullnbadata %>% 
+  mutate(gooddeal = ifelse(difference >= 1, "Well Underpaid",
+                           ifelse(difference <= -1, "Well Overpaid",
+                                  ifelse(difference < 1 & difference >= 0.50, "Slightly Underpaid",
+                                         ifelse(difference > -1 & difference <= -0.50, "Slightly Overpaid",
+                                                "Appropriately Paid")))))
+```
+
+```{r echo = FALSE, message = FALSE}
+deallabels <- c("Well Overpaid", "Slightly Overpaid", "Appropriately Paid", "Slightly Underpaid",
+                   "Well Underpaid")
+
+dealfrac <- c(rep(0, 5))
+
+for (ii in 1:5) {
+  filterer <- fullnbadata %>% 
+    filter(gooddeal == deallabels[ii])
+  
+  dealfrac[ii] = nrow(filterer)/nrow(fullnbadata)
+}
+
+pielabels <- paste0(deallabels, " (", round(100 * dealfrac, 2), "%) ")
+
+dealdata <- data.frame(deallabels, dealfrac)
+```
+
+```{r echo = FALSE, message = FALSE}
+pie(dealdata$dealfrac, labels = pielabels, col = c('red',
+                                                   'orange',
+                                                   'yellow',
+                                                   'light green',
+                                                   'green'),
+    main = "Pie Chart of NBA Player Salaries, Judged by Our Scaling Method")
+```
+
+## Graph 2
+```{r echo = FALSE, message = FALSE}
+data <- lapply(fullnbadata, unique)
+teamlist <- data$team
+
+badcontractjudge <- c(rep(0, 30))
+goodcontractjudge <- c(rep(0, 30))
+
+for (jj in 1:30) {
+  filterer <- fullnbadata %>% 
+    filter(team == teamlist[jj] & (gooddeal == "Well Overpaid" | gooddeal == "Slightly Overpaid"))
+  
+  badcontractjudge[jj] = nrow(filterer)
+}
+
+for (jj in 1:30) {
+  filterer <- fullnbadata %>% 
+    filter(team == teamlist[jj] & (gooddeal == "Well Underpaid" | gooddeal == "Slightly Underpaid"))
+  
+  goodcontractjudge[jj] = nrow(filterer)
+}
+
+contractjudge <- goodcontractjudge - badcontractjudge
+
+contractdata <- data.frame(teamlist, contractjudge)
+names(contractdata)[1] <- 'team'
+
+teamcolors <- c("#E03A3E", "#007A33", "#777D84", "#CE1141", "#00788C", 
+                "#860038", "#00538C", '#FEC524', "#1D42BA", "#FFC72C",
+                "#CE1141", "#FDBB30", "#1D428A", "#FDB927", "#5D76A9",
+                "#98002E", "#00471B", "#78BE20", "#85714D", "#F58426",
+                "#007AC1", "#0077C0", "#006BB6", "#E56020", "#E03A3E",
+                "#5A2D81", "#C4CED4", "#CE1141", "#002B5C", "#E31837")
+
+ggplot(data = contractdata, mapping = aes(fct_reorder(team, contractjudge), 
+                                          contractjudge,
+                                          fill = team)) +
+  geom_bar(stat = "identity", show.legend = FALSE) +
+  scale_y_continuous(expand = c(0,0),
+                     breaks = seq(-6, 5, 1)) +
+  scale_fill_manual(values = teamcolors) +
+  theme_minimal() +
+  geom_text(aes(label = team), y = ifelse(contractjudge > 0, contractjudge - .5, contractjudge + .5),
+            size = 3, angle = 90, color = ifelse(contractjudge == 0, 'black', 'white')) +
+  labs(y = "Underpaid Players - Overpaid Players",
+       title = "Contract Judge by NBA Team",
+       x = NULL) +
+  theme(axis.text.x = element_blank())
+```
+
+
+## Graph 3
+```{r echo = FALSE, message = FALSE}
+winandcontract <- merge(contractdata, winpct, by = "team")
+
+ggplot(winandcontract, mapping = aes(contractjudge, winpct)) +
+  geom_point(aes(color = team), size = 3, show.legend = FALSE) +
+  geom_smooth(method = lm, se = F) +
+  scale_color_manual(values = teamcolors) +
+  annotate(geom = "text", x = 0.5, y = 0.826, size = 3.5, label = "GSW", color = "#FFC72C") +
+  annotate(geom = "text", x = 3.5, y = 0.826, size = 3.5, label = "PHO", color = "#E56020") +
+  annotate(geom = "text", x = -5.6, y = 0.417, size = 3.5, label = "SAC", color = "#5A2D81") +
+  annotate(geom = "text", x = 3.4, y = 0.625, size = 3.5, label = "MIL", color = "#00471B") +
+  annotate(geom = "text", x = 4.5, y = 0.696, size = 3.5, label = "UTA", color = "#002B5C") +
+  annotate(geom = "text", x = -2.5, y = 0.182, size = 3.5, label = "DET", color = "#1D42BA") +
+  annotate(geom = "text", x = -2.4, y = 0.667, size = 3.5, label = "CHI", color = "#CE1141") +
+  annotate(geom = "text", x = -0.55, y = 0.696, size = 3.5, label = "BRK", color = "#777D84") +
+  annotate(geom = "text", x = 4.5, y = 0.269, size = 3.5, label = "NOP", color = "#85714D") +
+  annotate(geom = "text", x = -3.5, y = 0.208, size = 3.5, label = "ORL", color = "#006BB6") +
+  theme_minimal() +
+  labs(x = 'Contract Judge',
+       y = '2021-22 Win Percentage (through 25 games)',
+       title = "Win Percentage vs. Contract Judge - NBA Teams")
+  
+```
+
+
+## Graph 4
+```{r echo = FALSE, message = FALSE}
+ggplot(data = fullnbadata, mapping = aes(x = reorder(gooddeal, salary2021_22),
+                                         y = salary2021_22)) +
+  geom_bar(stat = "summary", aes(fill = gooddeal), show.legend = FALSE) +
+  scale_y_continuous(labels = scales::dollar,
+                     expand = c(0,0)) +
+  scale_fill_manual(values = c("#0e09fa", "#0076ff", "#00a9ff", "#00d3ff", "#07f6eb")) +
+  theme_classic() +
+  labs(x = 'Contract Type',
+       y = 'Average Salary',
+       title = 'Average Salary by Contract Type')
+```
+
+## Graph 5
+```{r echo = FALSE, message = FALSE}
+ggplot(data = fullnbadata, mapping = aes(x = reorder(gooddeal, war_total),
+                                         y = war_total)) +
+  geom_bar(stat = "summary", aes(fill = gooddeal), show.legend = FALSE) +
+  scale_y_continuous(expand = c(0,0)) +
+  theme_classic() +
+  scale_fill_manual(values = c("#2afa09", "#22e008", "#1bc707", "#14af06", "#0e9705")) +
+  labs(x = 'Contract Type',
+       y = 'Average WAR',
+       title = 'Average WAR by Contract Type')
+```
+
+
+## Graph 6
+```{r echo = FALSE}
+orderednba = arrange(fullnbadata, difference)
+woats = head(orderednba, n = 5)
+goats = tail(orderednba, n = 5)
+
+top_bottom_5 = rbind(woats, goats)
+
+ggplot(data = top_bottom_5, mapping = aes(fct_reorder(player, difference),
+                                          difference,
+                                          fill = team)) +
+  geom_col(show.legend = FALSE) +
+  geom_text(aes(label = gsub(" ", "\n", player)), size = 2.9,
+            y = ifelse(top_bottom_5$difference > 0,
+                       top_bottom_5$difference - .5,
+                       top_bottom_5$difference + 1)) +
+  geom_text(aes(label = paste0("(", team, ")")), size = 2.9,
+            y = ifelse(top_bottom_5$difference > 0,
+                       top_bottom_5$difference - 1,
+                       top_bottom_5$difference + .5)) +
+  scale_fill_manual(values = c('green', 'red', 'green', 'green', 'red',
+                               'red', 'red', 'red', 'green', 'green')) +
+  theme_minimal() +
+  labs(x = 'NBA Player',
+       y = 'Scaled Difference Between Efficiency and Salary',
+       title= 'Top 5 Worst and Best Contracts in the NBA') +
+  theme(axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+```
+
+
